@@ -51,7 +51,7 @@ class TankSimulation:
             net_change = inflow - actual_drain
             self.level_pct = float(np.clip(self.level_pct + net_change, 0.0, 100.0))
 
-    def check_alarms(0 -> dict:
+    def check_alarms(self) -> dict:
         return {
             "high_alarm": self.level_pct >= self.HIGH_ALARM_PCT,
             "low_alarm": self.level_pct <= self.LOW_ALARM_PCT,
@@ -59,7 +59,7 @@ class TankSimulation:
             "normal": self.LOW_ALARM_PCT < self.level_pct < self.HIGH_ALARM_PCT
         }
 
-    def get_status(0 -> dict:
+    def get_status(self) -> dict:
         alarms = self.check_alarms()
         inflow_val = round((self.inlet_valve_cmd / 100.0) * self.max_inflow_rate, 1)
         outflow_val = round((self.outlet_valve_fb / 100.0) * self.base_drain_rate, 1)
