@@ -72,11 +72,7 @@ st.markdown("""
         margin-bottom: 10px;
         border-left: 4px solid #2563EB;
     }
-    # Add this near your state initializations (around line 75)
-if 'manual_level' not in st.session_state:
-    st.session_state.manual_level = 50.0
-if 'enable_manual_level' not in st.session_state:
-    st.session_state.enable_manual_level = False
+    
     /* Light Engineering Report Styling */
     .report-light-container {
         background-color: #F8FAFC;
@@ -99,6 +95,22 @@ if 'active_fault' not in st.session_state:
 if 'num_points' not in st.session_state:
     st.session_state.num_points = 25
 
+# Process Variables Manual Control State Initializations
+if 'enable_manual_override' not in st.session_state:
+    st.session_state.enable_manual_override = False
+if 'manual_level' not in st.session_state:
+    st.session_state.manual_level = 50.0
+if 'manual_pressure' not in st.session_state:
+    st.session_state.manual_pressure = 8.2
+if 'manual_temp' not in st.session_state:
+    st.session_state.manual_temp = 85.0
+if 'manual_flow' not in st.session_state:
+    st.session_state.manual_flow = 182.0
+
+# Emergency Shutdown (ESD) State
+if 'esd_active' not in st.session_state:
+    st.session_state.esd_active = False
+
 # Initialize trend buffers if missing
 if 'press_history' not in st.session_state:
     st.session_state.press_history = [8.2] * st.session_state.num_points
@@ -110,50 +122,65 @@ if 'press_history' not in st.session_state:
     st.session_state.valve_fb_history = [35.0] * st.session_state.num_points
 
 def update_plant_simulation():
-    """Simulates real-time plant physics and injects configured instrument faults."""
+    """Simulates real-time plant physics, manual overrides, and handles ESD logic."""
     if st.session_state.sim_running:
         st.session_state.tick_count += 1
         t = st.session_state.tick_count
         noise = np.sin(t * 0.3) * 0.1
-        
-        # Check if manual level override is enabled
-        if st.session_state.get('enable_manual_level', False):
-            level = st.session_state.get('manual_level', 50.0)
-        else:
-            level = max(0.0, min(100.0, 50.0 + noise * 2.0))
-        
-        pressure = max(0.0, 8.2 + noise * 0.2)
-        temp = 85.0 + noise * 0.5
-        flow = 182.0 + noise * 3.0
-        air_press = 5.8
-        
-        # Fault behavior overrides
-        fault = st.session_state.active_fault
-        if fault == 'VALVE_FAULT':
-            valve_cmd = 80.0
-            valve_fb = 35.0
-        elif fault == 'PT101_DRIFT':
-            pressure = 12.8
-            valve_cmd = 60.0
-            valve_fb = 60.0
-        elif fault == 'LOOP_FAULT':
+
+        # Check for Emergency Shutdown (ESD) condition
+        if st.session_state.esd_active:
+            level = max(0.0, st.session_state.level_history[-1] - 1.5)  # Draining tank
             pressure = 0.0
-            valve_cmd = 50.0
-            valve_fb = 50.0
-        elif fault == 'LOW_AIR':
-            air_press = 3.2
-            valve_cmd = 80.0
-            valve_fb = 42.0
-        else: # NO_FAULT
+            temp = 25.0  # Cool down
+            flow = 0.0
+            air_press = 0.0
+            valve_cmd = 0.0
+            valve_fb = 0.0
+        elif st.session_state.enable_manual_override:
+            # User manual override parameters
+            level = st.session_state.manual_level
+            pressure = st.session_state.manual_pressure
+            temp = st.session_state.manual_temp
+            flow = st.session_state.manual_flow
+            air_press = 5.8
             valve_cmd = 60.0
             valve_fb = 60.0
+        else:
+            # Base physical dynamic parameters
+            level = max(0.0, min(100.0, 50.0 + noise * 2.0))
+            pressure = max(0.0, 8.2 + noise * 0.2)
+            temp = 85.0 + noise * 0.5
+            flow = 182.0 + noise * 3.0
+            air_press = 5.8
+            
+            # Fault behavior overrides
+            fault = st.session_state.active_fault
+            if fault == 'VALVE_FAULT':
+                valve_cmd = 80.0
+                valve_fb = 35.0
+            elif fault == 'PT101_DRIFT':
+                pressure = 12.8
+                valve_cmd = 60.0
+                valve_fb = 60.0
+            elif fault == 'LOOP_FAULT':
+                pressure = 0.0
+                valve_cmd = 50.0
+                valve_fb = 50.0
+            elif fault == 'LOW_AIR':
+                air_press = 3.2
+                valve_cmd = 80.0
+                valve_fb = 42.0
+            else: # NO_FAULT
+                valve_cmd = 60.0
+                valve_fb = 60.0
 
         # Update historical trend buffers
         st.session_state.press_history.pop(0)
         st.session_state.press_history.append(pressure)
         
         st.session_state.press_ref_history.pop(0)
-        st.session_state.press_ref_history.append(8.1 + noise * 0.1)
+        st.session_state.press_ref_history.append(8.1 + noise * 0.1 if not st.session_state.esd_active else 0.0)
         
         st.session_state.level_history.pop(0)
         st.session_state.level_history.append(level)
@@ -177,6 +204,36 @@ update_plant_simulation()
 with st.sidebar:
     st.markdown("### ⚙️ Engine Control Panel")
     
+    # 🚨 Emergency Shutdown (ESD) Panel
+    st.markdown("#### 🚨 Emergency Shutdown (ESD)")
+    if not st.session_state.esd_active:
+        if st.button("🚨 TRIGGER ESD TRIP", use_container_width=True, type="primary"):
+            st.session_state.esd_active = True
+            st.rerun()
+    else:
+        st.error("⚠️ EMERGENCY SHUTDOWN ACTIVE")
+        if st.button("🔄 RESET ESD TRIP", use_container_width=True):
+            st.session_state.esd_active = False
+            st.rerun()
+
+    st.divider()
+
+    # 🎛️ Process Variables Manual Controls
+    st.markdown("#### 🎛️ Process Variables Control")
+    st.session_state.enable_manual_override = st.checkbox(
+        "Enable Manual Control Override", 
+        value=st.session_state.enable_manual_override,
+        disabled=st.session_state.esd_active
+    )
+
+    if st.session_state.enable_manual_override and not st.session_state.esd_active:
+        st.session_state.manual_level = st.slider("Tank Level - LT-101 (%)", 0.0, 100.0, float(st.session_state.manual_level), 1.0)
+        st.session_state.manual_pressure = st.slider("Pressure - PT-101 (bar)", 0.0, 16.0, float(st.session_state.manual_pressure), 0.1)
+        st.session_state.manual_temp = st.slider("Temperature - TT-101 (°C)", 0.0, 150.0, float(st.session_state.manual_temp), 1.0)
+        st.session_state.manual_flow = st.slider("Flow - FT-101 (m³/h)", 0.0, 300.0, float(st.session_state.manual_flow), 5.0)
+
+    st.divider()
+
     # Navigation Section
     st.markdown("#### Navigation")
     nav_selection = st.selectbox(
@@ -199,7 +256,8 @@ with st.sidebar:
     selected_fault_label = st.radio(
         "Inject Fault Scenario:",
         list(fault_map.keys()),
-        index=1
+        index=1,
+        disabled=st.session_state.esd_active or st.session_state.enable_manual_override
     )
     st.session_state.active_fault = fault_map[selected_fault_label]
     
@@ -224,6 +282,10 @@ with st.sidebar:
 # Main Dashboard Header
 current_time = datetime.datetime.now().strftime("%b %d, %Y %H:%M:%S")
 
+status_badge = '<span class="badge-danger">🚨 ESD TRIPPED</span>' if st.session_state.esd_active else (
+    '<span class="badge-warning">🛠️ MANUAL OVERRIDE</span>' if st.session_state.enable_manual_override else '<span class="badge-normal">● Plant Connected</span>'
+)
+
 st.markdown(f"""
 <div style="display: flex; justify-content: space-between; align-items: center; padding-bottom: 12px; border-bottom: 1px solid #1E294B; margin-bottom: 16px;">
     <div>
@@ -233,7 +295,7 @@ st.markdown(f"""
         <p style="margin:0; font-size: 12px; color: #94A3B8;">Multi-Agent AI Platform for Process Instrumentation & Diagnostic Engineering</p>
     </div>
     <div style="text-align: right;">
-        <span class="badge-normal">● Plant Connected</span>
+        {status_badge}
         <div style="font-family: monospace; font-size: 11px; color: #94A3B8; margin-top: 4px;">{current_time}</div>
     </div>
 </div>
@@ -252,23 +314,25 @@ with col_overview:
     curr_temp = st.session_state.temp_history[-1]
     curr_flow = st.session_state.flow_history[-1]
     
+    liquid_color = "#EF4444" if st.session_state.esd_active else "#0284c7"
+    
     # SVG Tank Schematic HTML Component
     svg_html = f"""
     <div style="background-color: #131C35; border: 1px solid #1E294B; border-radius: 10px; padding: 10px; text-align: center;">
         <svg viewBox="0 0 320 170" style="width: 100%; height: 180px;">
             <!-- Inlet Pipe -->
             <path d="M 10 120 L 70 120 L 70 100 L 95 100" fill="none" stroke="#334155" stroke-width="8"/>
-            <path d="M 10 120 L 70 120 L 70 100 L 95 100" fill="none" stroke="#0284c7" stroke-width="4"/>
+            <path d="M 10 120 L 70 120 L 70 100 L 95 100" fill="none" stroke="{liquid_color}" stroke-width="4"/>
             
             <!-- Outlet Pipe -->
             <path d="M 205 100 L 250 100 L 250 120 L 310 120" fill="none" stroke="#334155" stroke-width="8"/>
-            <path d="M 205 100 L 250 100 L 250 120 L 310 120" fill="none" stroke="#0284c7" stroke-width="4"/>
+            <path d="M 205 100 L 250 100 L 250 120 L 310 120" fill="none" stroke="{liquid_color}" stroke-width="4"/>
 
             <!-- Tank Vessel Body -->
             <rect x="95" y="40" width="110" height="100" rx="12" fill="#0f172a" stroke="#38bdf8" stroke-width="2.5"/>
             
             <!-- Dynamic Liquid Level -->
-            <rect x="98" y="{138 - (curr_lvl * 0.9) }" width="104" height="{curr_lvl * 0.9}" rx="4" fill="#0284c7" opacity="0.8"/>
+            <rect x="98" y="{138 - (curr_lvl * 0.9) }" width="104" height="{curr_lvl * 0.9}" rx="4" fill="{liquid_color}" opacity="0.8"/>
             <text x="150" y="115" font-family="sans-serif" font-size="14" font-weight="bold" fill="#ffffff" text-anchor="middle">{curr_lvl:.0f}%</text>
             <text x="150" y="75" font-family="sans-serif" font-size="12" font-weight="bold" fill="#94a3b8" text-anchor="middle">T-101</text>
 
@@ -283,7 +347,7 @@ with col_overview:
 
             <!-- Control Valve CV-101 -->
             <g transform="translate(225, 90)">
-                <path d="M 0 0 L 18 14 L 0 14 L 18 0 Z" fill="#38bdf8" stroke="#0284c7" stroke-width="1"/>
+                <path d="M 0 0 L 18 14 L 0 14 L 18 0 Z" fill="{'#EF4444' if st.session_state.esd_active else '#38bdf8'}" stroke="#0284c7" stroke-width="1"/>
                 <line x1="9" y1="7" x2="9" y2="-6" stroke="#38bdf8" stroke-width="2"/>
                 <circle cx="9" cy="-10" r="5" fill="#1e293b" stroke="#f59e0b" stroke-width="1.5"/>
             </g>
@@ -350,7 +414,7 @@ with col_gauges:
 
     # Air Pressure Gauge
     fig_gauges.add_trace(go.Indicator(
-        mode="gauge+number", value=5.8 if st.session_state.active_fault != 'LOW_AIR' else 3.2,
+        mode="gauge+number", value=0.0 if st.session_state.esd_active else (3.2 if st.session_state.active_fault == 'LOW_AIR' else 5.8),
         number={'suffix': " bar", 'font': {'size': 14, 'color': '#FFFFFF'}},
         title={'text': "Inst Air", 'font': {'size': 10, 'color': '#94A3B8'}},
         gauge={'axis': {'range': [0, 10]}, 'bar': {'color': '#8B5CF6'}, 'bgcolor': '#1E294B'}
@@ -365,16 +429,26 @@ with col_gauges:
 with col_health:
     st.markdown("<h4 style='font-size:14px; margin-bottom:8px;'>❤️ Instrument Health Table</h4>", unsafe_allow_html=True)
     
-    cv_status = "NORMAL" if st.session_state.active_fault != 'VALVE_FAULT' else "WARNING"
-    pt_status = "NORMAL" if st.session_state.active_fault != 'PT101_DRIFT' else "WARNING"
-    
-    health_data = {
-        "Tag": ["PT-101", "PT-102", "LT-101", "TT-101", "FT-101", "CV-101"],
-        "PV": [f"{curr_press:.1f} bar", "8.1 bar", f"{curr_lvl:.0f} %", f"{curr_temp:.0f} °C", f"{curr_flow:.0f} m³/h", f"{curr_cmd:.0f} %"],
-        "Signal": ["12.2 mA", "12.1 mA", "12.0 mA", "13.1 mA", "13.7 mA", f"{curr_fb:.0f}% FB"],
-        "Health": ["42%" if pt_status == "WARNING" else "96%", "95%", "94%", "93%", "92%", "58%" if cv_status == "WARNING" else "95%"],
-        "Status": [pt_status, "NORMAL", "NORMAL", "NORMAL", "NORMAL", cv_status]
-    }
+    if st.session_state.esd_active:
+        overall_status = "TRIPPED"
+        health_data = {
+            "Tag": ["PT-101", "PT-102", "LT-101", "TT-101", "FT-101", "CV-101"],
+            "PV": ["0.0 bar", "0.0 bar", f"{curr_lvl:.0f} %", f"{curr_temp:.0f} °C", "0 m³/h", "0 %"],
+            "Signal": ["4.0 mA", "4.0 mA", "4.0 mA", "4.0 mA", "4.0 mA", "0% FB"],
+            "Health": ["0%", "0%", "0%", "0%", "0%", "0%"],
+            "Status": ["TRIPPED", "TRIPPED", "TRIPPED", "TRIPPED", "TRIPPED", "TRIPPED"]
+        }
+    else:
+        cv_status = "NORMAL" if st.session_state.active_fault != 'VALVE_FAULT' else "WARNING"
+        pt_status = "NORMAL" if st.session_state.active_fault != 'PT101_DRIFT' else "WARNING"
+        
+        health_data = {
+            "Tag": ["PT-101", "PT-102", "LT-101", "TT-101", "FT-101", "CV-101"],
+            "PV": [f"{curr_press:.1f} bar", "8.1 bar", f"{curr_lvl:.0f} %", f"{curr_temp:.0f} °C", f"{curr_flow:.0f} m³/h", f"{curr_cmd:.0f} %"],
+            "Signal": ["12.2 mA", "12.1 mA", "12.0 mA", "13.1 mA", "13.7 mA", f"{curr_fb:.0f}% FB"],
+            "Health": ["42%" if pt_status == "WARNING" else "96%", "95%", "94%", "93%", "92%", "58%" if cv_status == "WARNING" else "95%"],
+            "Status": [pt_status, "NORMAL", "NORMAL", "NORMAL", "NORMAL", cv_status]
+        }
     
     df_health = pd.DataFrame(health_data)
     st.dataframe(df_health, hide_index=True, use_container_width=True, height=220)
@@ -423,10 +497,20 @@ with col_trends:
 with col_agents:
     st.markdown("<h4 style='font-size:14px;'>🧠 AI Analysis – Multi-Agent Workflow Feed</h4>", unsafe_allow_html=True)
     
-    # Dynamic Agent Card content based on active fault
-    if st.session_state.active_fault == 'VALVE_FAULT':
-        a1_msg = f"<strong>Detected anomaly:</strong> CV-101 position feedback ({curr_fb:.0f}%) is significantly lower than command ({curr_cmd:.0f}%). Deviation of {curr_cmd - curr_fb:.0f}% active for >15 mins."
-        a2_msg = "Process parameters (Level, Pressure, Flow) are within operational bounds. Issue isolated to CV-101 actuation assembly."
+    # Dynamic Agent Card content based on active fault / ESD status
+    if st.session_state.esd_active:
+        a1_msg = "🚨 <strong>PLANT TRIP DETECTED:</strong> Emergency Shutdown System (ESD) actuated. All isolation valves closed."
+        a2_msg = "Process lines depressurized. Inflow isolated."
+        a3_msg = "Interlock active. Safety PLC latched in SAFE state."
+        a4_causes = [("Manual Operator ESD Trip", "100%")]
+    elif st.session_state.enable_manual_override:
+        a1_msg = "🛠️ <strong>Manual Control Mode Active:</strong> Process parameters under direct operator control."
+        a2_msg = "Closed-loop automatic controllers bypassed."
+        a3_msg = "Manual setpoint overrides confirmed across active tags."
+        a4_causes = [("Operator Manual Testing", "100%")]
+    elif st.session_state.active_fault == 'VALVE_FAULT':
+        a1_msg = f"<strong>Detected anomaly:</strong> CV-101 position feedback ({curr_fb:.0f}%) is significantly lower than command ({curr_cmd:.0f}%)."
+        a2_msg = "Process parameters within operational bounds. Issue isolated to CV-101 actuation assembly."
         a3_msg = "PLC command output correct at 80%. Positioner feedback disagreement confirmed."
         a4_causes = [
             ("1. Control valve / positioner failure", "45%"),
@@ -437,22 +521,22 @@ with col_agents:
     elif st.session_state.active_fault == 'PT101_DRIFT':
         a1_msg = f"<strong>Detected anomaly:</strong> Pressure transmitter PT-101 reading {curr_press:.1f} bar vs redundant reference PT-102 at 8.1 bar."
         a2_msg = "Process pressure verified stable by PT-102. Zero/span drift identified on PT-101 primary element."
-        a3_msg = "Transmitter loop current 19.5 mA (out of specification for actual process pressure)."
+        a3_msg = "Transmitter loop current out of specification."
         a4_causes = [
             ("1. PT-101 Sensing Diaphragm Drift", "65%"),
             ("2. Impulse line blockage / sludge", "20%"),
             ("3. Analog Input Channel drift", "15%")
         ]
     else:
-        a1_msg = "✓ All process loops operating normally. PT-101 matches PT-102 within ±0.1 bar."
+        a1_msg = "✓ All process loops operating normally."
         a2_msg = "Process parameters completely stable."
         a3_msg = "No I/O errors or SCADA alarm overrides active."
         a4_causes = [("Baseline Operation Normal", "100%")]
 
     # Agent 1: Diagnostic
     st.markdown(f"""
-    <div class="agent-card" style="border-left-color: #10B981;">
-        <div style="font-weight: bold; color: #10B981; font-size: 12px;">1. Diagnostic Engineer Agent</div>
+    <div class="agent-card" style="border-left-color: {'#EF4444' if st.session_state.esd_active else '#10B981'};">
+        <div style="font-weight: bold; color: {'#EF4444' if st.session_state.esd_active else '#10B981'}; font-size: 12px;">1. Diagnostic Engineer Agent</div>
         <div style="font-size: 11px; color: #E2E8F0; margin-top: 4px;">{a1_msg}</div>
     </div>
     """, unsafe_allow_html=True)
@@ -474,7 +558,7 @@ with col_agents:
     """, unsafe_allow_html=True)
 
     # Agent 4: Root Cause Engineer
-    causes_html = "".join([f"<div style='display:flex; justify-between; font-size:11px; margin-top:2px;'><span>{c[0]}</span><strong style='color:#F59E0B;'>{c[1]}</strong></div>" for c in a4_causes])
+    causes_html = "".join([f"<div style='display:flex; justify-content:space-between; font-size:11px; margin-top:2px;'><span>{c[0]}</span><strong style='color:#F59E0B;'>{c[1]}</strong></div>" for c in a4_causes])
     st.markdown(f"""
     <div class="agent-card" style="border-left-color: #F59E0B;">
         <div style="font-weight: bold; color: #FBBF24; font-size: 12px;">4. Root Cause Probabilities</div>
@@ -488,8 +572,8 @@ st.divider()
 col_report, col_assistant = st.columns([8, 4])
 
 with col_report:
-    p_tag = "HIGH PRIORITY" if st.session_state.active_fault != 'NO_FAULT' else "NORMAL"
-    badge_color = "#EF4444" if p_tag == "HIGH PRIORITY" else "#10B981"
+    p_tag = "CRITICAL ESD TRIP" if st.session_state.esd_active else ("HIGH PRIORITY" if st.session_state.active_fault != 'NO_FAULT' else "NORMAL")
+    badge_color = "#EF4444" if p_tag in ["HIGH PRIORITY", "CRITICAL ESD TRIP"] else "#10B981"
     
     st.markdown(f"""
     <div class="report-light-container">
@@ -498,17 +582,17 @@ with col_report:
             <span style="background-color: {badge_color}; color: white; padding: 2px 10px; border-radius: 12px; font-weight: bold; font-size: 11px;">{p_tag}</span>
         </div>
         <div style="background-color: #E2E8F0; padding: 8px 12px; border-radius: 6px; font-weight: 600; font-size: 12px; margin-bottom: 12px; color: #1E293B;">
-            Asset Under Investigation: <span style="color: #2563EB;">CV-101 (Control Valve Assembly)</span>
+            Asset Under Investigation: <span style="color: #2563EB;">{"Unit T-101 Safety Loop" if st.session_state.esd_active else "CV-101 (Control Valve Assembly)"}</span>
         </div>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; font-size: 12px; color: #334155;">
             <div>
                 <strong style="color: #0F172A;">Detected Condition:</strong>
-                <p>Position feedback divergence. Command = {curr_cmd:.0f}%, Feedback = {curr_fb:.0f}%. Stem position lagging controller output.</p>
+                <p>{"Emergency shutdown trip active. All process streams safely isolated." if st.session_state.esd_active else f"Command = {curr_cmd:.0f}%, Feedback = {curr_fb:.0f}%. Stem position lagging controller output."}</p>
                 <strong style="color: #0F172A;">Recommended Action Steps:</strong>
                 <ol style="margin-top:4px; padding-left: 18px;">
-                    <li>Check supply air pressure (> 5.0 bar required).</li>
-                    <li>Inspect digital positioner feedback link & calibration.</li>
-                    <li>Perform stroke test during planned window.</li>
+                    <li>{"Verify zero pressure across impulse lines prior to reset." if st.session_state.esd_active else "Check supply air pressure (> 5.0 bar required)."}</li>
+                    <li>{"Inspect ESD solenoid valve status." if st.session_state.esd_active else "Inspect digital positioner feedback link & calibration."}</li>
+                    <li>{"Clear safety latches in Safety PLC." if st.session_state.esd_active else "Perform stroke test during planned window."}</li>
                 </ol>
             </div>
             <div>
@@ -531,13 +615,16 @@ with col_assistant:
     
     selected_task = st.selectbox(
         "Select Engineering Task:",
-        ["CV-101 Positioner Diagnostics", "P&ID Specification Review", "Instrument Calibration Export", "Loop Tuning Assistance"]
+        ["Emergency Shutdown Procedure", "CV-101 Positioner Diagnostics", "P&ID Specification Review", "Instrument Calibration Export", "Loop Tuning Assistance"]
     )
     
     user_query = st.text_area("Ask a technical question:", value=f"What are the diagnostic steps for {selected_task}?", height=80)
     
     if st.button("Get AI Recommendation", use_container_width=True):
-        st.info(f"**AI Recommendation for {selected_task}:**\n1. Check supply air regulator filter for oil/moisture contamination.\n2. Re-align positioner feedback potentiometer arms.\n3. Run auto-tune procedure via HART communicator.")
+        if st.session_state.esd_active:
+            st.warning("**ESD Safety Protocol Active:**\n1. Confirm zero energy state.\n2. Inspect cause of trip.\n3. Reset Safety PLC before restarting process loops.")
+        else:
+            st.info(f"**AI Recommendation for {selected_task}:**\n1. Check supply air regulator filter for oil/moisture contamination.\n2. Re-align positioner feedback potentiometer arms.\n3. Run auto-tune procedure via HART communicator.")
 
 # Auto-rerun loop for smooth live dashboard updates when simulation is active
 if st.session_state.sim_running:
