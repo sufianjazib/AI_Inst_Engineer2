@@ -2,49 +2,78 @@ import time
 import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
-from tank_simulation import TankSimulation, get_gauge_color
+from tank_simulation import TankSimulation
 
-# Streamlit Page Config for Dark Industrial SCADA Dashboard
+# Streamlit Page Config for Stage-1 Industrial Dark SCADA
 st.set_page_config(
-    page_title="AI INSTRUMENTATION ENGINE - Stage 2",
+    page_title="AI INSTRUMENTATION ENGINE - Stage-1",
     page_icon="⚙️",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
-# Custom Industrial Dark CSS Styling
+# Custom Stage-1 SCADA CSS Styling
 st.markdown("""
 <style>
-    .stApp { background-color: #0B101D; color: #E2E8F0; }
-    div[data-testid="stSidebar"] { background-color: #070A13; border-right: 1px solid #1E293B; }
+    .stApp { background-color: #070B14; color: #E2E8F0; font-family: 'Inter', monospace, sans-serif; }
     
-    /* SCADA Card Container */
-    .scada-card {
-        background-color: #111827;
-        border: 1px solid #1F2937;
+    /* Header Container */
+    .header-card {
+        background-color: #0D1322;
+        border: 1px solid #1E293B;
         border-radius: 8px;
-        padding: 14px;
-        margin-bottom: 12px;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+        padding: 12px 20px;
+        margin-bottom: 16px;
     }
     
-    .card-title {
+    /* Panel Cards */
+    .scada-panel {
+        background-color: #0D1322;
+        border: 1px solid #1E293B;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 16px;
+    }
+    
+    .panel-header {
         font-size: 13px;
-        font-weight: 600;
+        font-weight: 700;
         color: #94A3B8;
         text-transform: uppercase;
         letter-spacing: 0.5px;
+        margin-bottom: 12px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    /* Metric Cards Top Row */
+    .metric-card {
+        background-color: #0F172A;
+        border: 1px solid #1E293B;
+        border-radius: 6px;
+        padding: 10px 14px;
         margin-bottom: 10px;
     }
+    .metric-title { font-size: 11px; color: #94A3B8; font-weight: 600; display: flex; justify-content: space-between; }
+    .metric-sub { font-size: 11px; color: #64748B; margin-top: 2px; }
+    .metric-val { font-size: 20px; font-weight: 700; color: #FFFFFF; margin: 4px 0; }
+    .metric-val span { font-size: 12px; color: #94A3B8; font-weight: normal; }
+    .metric-sig { font-size: 11px; color: #38BDF8; font-family: monospace; }
     
-    /* Table Styling */
-    .health-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-    .health-table th { color: #64748B; text-align: left; padding: 6px; border-bottom: 1px solid #1E293B; }
-    .health-table td { padding: 6px; border-bottom: 1px solid #111827; }
-    
-    .status-normal { color: #10B981; font-weight: bold; }
-    .status-warning { color: #F59E0B; font-weight: bold; }
-    .status-danger { color: #EF4444; font-weight: bold; }
+    .tag-ok { background-color: #064E3B; color: #34D399; font-size: 10px; padding: 2px 6px; border-radius: 4px; border: 1px solid #059669; }
+    .tag-fault { background-color: #7F1D1D; color: #FCA5A5; font-size: 10px; padding: 2px 6px; border-radius: 4px; border: 1px solid #DC2626; }
+    .tag-active { background-color: #064E3B; color: #34D399; font-size: 11px; padding: 4px 10px; border-radius: 12px; font-weight: 600; }
+
+    /* Target Process Info Row */
+    .info-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 12px; background: #070B14; padding: 8px; border-radius: 4px; }
+    .info-label { color: #64748B; }
+    .info-val { color: #38BDF8; font-weight: 600; font-family: monospace; }
+
+    /* Telemetry Table */
+    .telem-table { width: 100%; border-collapse: collapse; font-size: 12px; font-family: monospace; }
+    .telem-table th { color: #64748B; text-align: left; padding: 8px; border-bottom: 1px solid #1E293B; font-weight: 600; }
+    .telem-table td { padding: 8px; border-bottom: 1px solid #0F172A; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -52,185 +81,249 @@ st.markdown("""
 if "tank" not in st.session_state:
     st.session_state.tank = TankSimulation()
 if "history" not in st.session_state:
-    st.session_state.history = {"time": [], "level": [], "pressure": [], "valve_cmd": [], "valve_fb": []}
+    st.session_state.history = {"time": list(range(30)), "pt101": [8.21]*30, "pt102": [8.21]*30, "cmd": [58.0]*30, "fb": [58.0]*30}
+if "paused" not in st.session_state:
+    st.session_state.paused = False
 
 tank = st.session_state.tank
 
-# Helper to generate Gauge Plots
-def build_donut_gauge(value, min_v, max_v, title, unit, color):
-    fig = go.Figure(go.Indicator(
-        mode="gauge+number",
-        value=value,
-        number={'suffix': f" {unit}", 'font': {'size': 18, 'color': '#FFFFFF'}},
-        gauge={
-            'axis': {'range': [min_v, max_v], 'tickwidth': 1, 'tickcolor': "#475569"},
-            'bar': {'color': color, 'thickness': 0.3},
-            'bgcolor': "#1E293B",
-            'borderwidth': 0,
-        }
-    ))
-    fig.update_layout(
-        height=130, margin=dict(l=10, r=10, t=25, b=10),
-        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-        title={'text': title, 'font': {'size': 12, 'color': '#94A3B8'}, 'x': 0.5}
-    )
-    return fig
+# --- TOP SCADA HEADER ---
+head_col1, head_col2 = st.columns([3, 1])
 
-# --- TOP HEADER BAR ---
-h_col1, h_col2, h_col3 = st.columns([3, 1, 1])
-with h_col1:
-    st.markdown("<h2 style='margin:0; color:#38BDF8;'>⚙️ AI INSTRUMENTATION ENGINE – Stage 2</h2>", unsafe_allow_html=True)
-    st.caption("Multi-Agent AI for Complete Instrumentation & Process Engineering")
-with h_col2:
-    st.markdown("🟢 **Plant Connected** | Apr 26, 2026 14:32:18")
-with h_col3:
-    sim_mode = st.toggle("Mode: AI + Simulation", value=True)
+with head_col1:
+    st.markdown("""
+        <div style="display: flex; align-items: center; gap: 12px;">
+            <div style="background-color: #0284C7; padding: 8px; border-radius: 8px;">⚙️</div>
+            <div>
+                <div style="font-size: 20px; font-weight: bold; color: #FFFFFF;">
+                    AI INSTRUMENTATION ENGINE <span style="background-color: #0C4A6E; color: #38BDF8; font-size: 12px; padding: 2px 8px; border-radius: 12px; border: 1px solid #0284C7;">Stage-1 v1.0</span>
+                </div>
+                <div style="font-size: 12px; color: #64748B;">
+                    Intelligent Instrument Health Monitoring, Deterministic Diagnostics & Fault Isolation
+                </div>
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+
+with head_col2:
+    btn_c1, btn_c2 = st.columns(2)
+    with btn_c1:
+        if st.button("⏸ Pause Sim" if not st.session_state.paused else "▶ Resume Sim", use_container_width=True):
+            st.session_state.paused = not st.session_state.paused
+    with btn_c2:
+        if st.button("🔄 Reset", use_container_width=True):
+            st.session_state.tank = TankSimulation()
+            st.rerun()
 
 st.divider()
 
-# --- SIDEBAR NAVIGATION & FAULT INJECTION ---
-st.sidebar.markdown("### MAIN NAVIGATION")
-st.sidebar.button("🌐 Overview", use_container_width=True)
-st.sidebar.button("🔬 Process View", use_container_width=True)
-st.sidebar.button("🤖 AI Diagnosis", use_container_width=True)
+if not st.session_state.paused:
+    tank.update_simulation(dt=1.0)
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("### ⚡ FAULT INJECTION")
-fault_choice = st.sidebar.radio(
-    "Select Fault Mode:",
-    ["No Fault", "PT-101 Drift", "4–20 mA Loop Fault", "Stuck Transmitter", "Impulse Line Blockage", "Control Valve Fault", "Low Instrument Air"],
-    index=0
-)
-if st.sidebar.button("Inject Fault", type="primary", use_container_width=True):
-    tank.inject_fault(fault_choice)
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("### PROCESS CONTROL")
-inlet_val = st.sidebar.slider("Inlet Valve Command (%)", 0, 100, int(tank.inlet_valve_cmd))
-outlet_val = st.sidebar.slider("Outlet Valve Command (%)", 0, 100, int(tank.outlet_valve_cmd))
-tank.set_valves(inlet_val, outlet_val)
-
-# Update simulation dynamics
-tank.update_simulation(dt=1.0)
 status = tank.get_status()
 
-# Store timeline history
-st.session_state.history["time"].append(time.strftime("%H:%M:%S"))
-st.session_state.history["level"].append(status["level_pct"])
-st.session_state.history["pressure"].append(status["pressure"])
-st.session_state.history["valve_cmd"].append(status["valve_cmd"])
-st.session_state.history["valve_fb"].append(status["valve_fb"])
+# Update simulation history
+st.session_state.history["pt101"].append(status["pressure"])
+st.session_state.history["pt102"].append(status["pressure"])
+st.session_state.history["cmd"].append(status["valve_cmd"])
+st.session_state.history["fb"].append(status["valve_fb"])
 
-# Keep last 30 points
-for key in st.session_state.history:
-    st.session_state.history[key] = st.session_state.history[key][-30:]
+for k in st.session_state.history:
+    st.session_state.history[k] = st.session_state.history[k][-30:]
 
-# --- TOP DASHBOARD ROW ---
-r1_c1, r1_c2, r1_c3 = st.columns([1.2, 1.8, 1.2])
+# --- MAIN LAYOUT ---
+col_left, col_right = st.columns([1, 3])
 
-# Panel 1: Plant Diagram
-with r1_c1:
-    st.markdown('<div class="scada-card"><div class="card-title">🏭 Plant Overview – Tank T-101</div>', unsafe_allow_html=True)
-    gauge_col = get_gauge_color(status["level_pct"], tank.HIGH_ALARM_PCT, tank.LOW_ALARM_PCT)
-    
-    # Visual Dynamic Tank Container
-    tank_visual = f"""
-    <div style="border: 2px solid #334155; border-radius: 8px; height: 180px; background: #0F172A; position: relative; overflow: hidden; margin-top: 10px;">
-        <div style="position: absolute; top: 5%; width: 100%; border-top: 1px dashed #EF4444; z-index: 2;"></div>
-        <div style="position: absolute; top: 95%; width: 100%; border-top: 1px dashed #F59E0B; z-index: 2;"></div>
-        <div style="position: absolute; bottom: 0; width: 100%; height: {status['level_pct']}%; background-color: {gauge_col}; transition: height 0.5s ease; opacity: 0.7;"></div>
-        <div style="position: absolute; width: 100%; top: 40%; text-align: center; font-size: 22px; font-weight: bold; color: white;">
-            T-101<br><span style="font-size:18px;">{status['level_pct']}%</span>
+# --- LEFT COLUMN: TARGET PROCESS & FAULT INJECTION ---
+with col_left:
+    # Target Process Panel
+    st.markdown("""
+    <div class="scada-panel">
+        <div class="panel-header">
+            <span>Target Process</span>
+            <span style="color:#38BDF8;">T-101 TANK</span>
         </div>
+        <div class="info-row"><span class="info-label">Process Medium</span><span class="info-val">Demin Water System</span></div>
+        <div class="info-row"><span class="info-label">Sim Engine Loop</span><span class="info-val">1000 ms / Tick</span></div>
+        <div class="info-row"><span class="info-label">Rule Evaluation</span><span class="info-val">Deterministic IEC 61508</span></div>
     </div>
-    <div style="display:flex; justify-content:space-between; margin-top:8px; font-size:12px; color:#94A3B8;">
-        <span>Inlet: {status['inflow']} m³/h</span>
-        <span>Outlet: {status['outflow']} m³/h</span>
+    """, unsafe_allow_html=True)
+    
+    # Fault Injection Panel
+    st.markdown("""
+    <div class="scada-panel">
+        <div class="panel-header">
+            <span>⚠️ Fault Injection</span>
+            <span class="tag-active">NO_FAULT</span>
+        </div>
+        <p style="font-size: 11px; color: #64748B; margin-bottom: 14px;">
+            Inject physical hardware, calibration, signal loop, or pneumatic abnormalities to test diagnostic engine:
+        </p>
     </div>
-    """
-    st.markdown(tank_visual, unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-
-# Panel 2: Key Process Parameters Gauges
-with r1_c2:
-    st.markdown('<div class="scada-card"><div class="card-title">🎛️ Key Process Parameters</div>', unsafe_allow_html=True)
-    g_col1, g_col2, g_col3 = st.columns(3)
+    """, unsafe_allow_html=True)
     
-    with g_col1:
-        st.plotly_chart(build_donut_gauge(status["level_pct"], 0, 100, "Level (LT-101)", "%", gauge_col), use_container_width=True)
-        st.plotly_chart(build_donut_gauge(status["inflow"], 0, 300, "Flow (FT-101)", "m³/h", "#00E5FF"), use_container_width=True)
+    fault_options = [
+        "0. Normal Operations (No Fault)",
+        "1. PT-101 Calibration Drift (+4.5 bar)",
+        "2. PT-101 4–20mA Loop Fault (3.6 mA)",
+        "3. PT-101 Stuck Transmitter (8.0 bar)",
+        "4. Impulse Line Blockage (Damped)",
+        "5. Control Valve CV-101 Stiction"
+    ]
+    
+    selected_fault = st.radio("Select Active Fault:", fault_options, label_visibility="collapsed")
+    
+    # Map selection back to simulation logic
+    if "0." in selected_fault:
+        tank.inject_fault("No Fault")
+    elif "1." in selected_fault:
+        tank.inject_fault("PT-101 Drift")
+    elif "2." in selected_fault:
+        tank.inject_fault("4–20 mA Loop Fault")
+    elif "3." in selected_fault:
+        tank.inject_fault("Stuck Transmitter")
+    elif "4." in selected_fault:
+        tank.inject_fault("Impulse Line Blockage")
+    elif "5." in selected_fault:
+        tank.inject_fault("Control Valve Fault")
+
+# --- RIGHT COLUMN: METRIC CARDS, TRENDS & TELEMETRY ---
+with col_right:
+    # Top Metrics Bar (6 Instrumentation Cards)
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
+    
+    with m1:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">PT-101 <span class="tag-ok">OK</span></div>
+            <div class="metric-sub">Pressure Tx</div>
+            <div class="metric-val">{status['pressure']} <span>bar</span></div>
+            <div class="metric-sig">Signal: 12.21 mA</div>
+        </div>
+        """, unsafe_allow_html=True)
         
-    with g_col2:
-        st.plotly_chart(build_donut_gauge(status["pressure"], 0, 16, "Pressure (PT-101)", "bar", "#3B82F6"), use_container_width=True)
-        valve_color = "#EF4444" if status["valve_fault"] else "#10B981"
-        st.plotly_chart(build_donut_gauge(status["valve_fb"], 0, 100, "Valve Position (CV-101)", "%", valve_color), use_container_width=True)
+    with m2:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">PT-102 [RED] <span class="tag-ok">OK</span></div>
+            <div class="metric-sub">Ref Pressure</div>
+            <div class="metric-val">{status['pressure']} <span>bar</span></div>
+            <div class="metric-sig">Signal: 12.21 mA</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with m3:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">LT-101 <span class="tag-ok">OK</span></div>
+            <div class="metric-sub">Tank Level</div>
+            <div class="metric-val">{status['level_pct']} <span>%</span></div>
+            <div class="metric-sig">Signal: 13.73 mA</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with m4:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">TT-101 <span class="tag-ok">OK</span></div>
+            <div class="metric-sub">Temperature</div>
+            <div class="metric-val">{status['temp']} <span>°C</span></div>
+            <div class="metric-sig">Signal: 13.05 mA</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with m5:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">FT-101 <span class="tag-ok">OK</span></div>
+            <div class="metric-sub">Inlet Flow</div>
+            <div class="metric-val">{status['inflow']} <span>m³/h</span></div>
+            <div class="metric-sig">Signal: 13.52 mA</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with m6:
+        valve_tag = '<span class="tag-fault">WARN</span>' if status["valve_fault"] else '<span class="tag-ok">OK</span>'
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">CV-101 {valve_tag}</div>
+            <div class="metric-sub">Cmd vs FB</div>
+            <div class="metric-val">{status['valve_fb']} <span>%</span></div>
+            <div class="metric-sig">Air Sup: {status['inst_air']} bar</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # Process Trends Panel
+    st.markdown('<div class="scada-panel">', unsafe_allow_html=True)
+    st.markdown('<div class="panel-header">📈 Dynamic Real-Time Process Trends (Tank T-101)</div>', unsafe_allow_html=True)
+    
+    t_col1, t_col2 = st.columns(2)
+    
+    with t_col1:
+        fig_p = go.Figure()
+        fig_p.add_trace(go.Scatter(y=st.session_state.history["pt101"], name="PT-101 (bar)", line=dict(color="#00E5FF", width=2)))
+        fig_p.add_trace(go.Scatter(y=st.session_state.history["pt102"], name="PT-102 Ref (bar)", line=dict(color="#38BDF8", width=2, dash="dash")))
+        fig_p.update_layout(
+            title={'text': "PT-101 vs Redundant PT-102 Pressure", 'font': {'size': 12, 'color': '#94A3B8'}},
+            height=200, margin=dict(l=10, r=10, t=30, b=10), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+            xaxis=dict(gridcolor='#1E293B', showticklabels=True), yaxis=dict(gridcolor='#1E293B')
+        )
+        st.plotly_chart(fig_p, use_container_width=True)
+
+    with t_col2:
+        fig_v = go.Figure()
+        fig_v.add_trace(go.Scatter(y=st.session_state.history["cmd"], name="CV-101 Command (%)", line=dict(color="#818CF8", width=2)))
+        fig_v.add_trace(go.Scatter(y=st.session_state.history["fb"], name="CV-101 Feedback (%)", line=dict(color="#F59E0B", width=2)))
+        fig_v.update_layout(
+            title={'text': "CV-101 Control Valve Cmd vs Feedback", 'font': {'size': 12, 'color': '#94A3B8'}},
+            height=200, margin=dict(l=10, r=10, t=30, b=10), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+            xaxis=dict(gridcolor='#1E293B', showticklabels=True), yaxis=dict(gridcolor='#1E293B')
+        )
+        st.plotly_chart(fig_v, use_container_width=True)
         
-    with g_col3:
-        st.plotly_chart(build_donut_gauge(status["temp"], 0, 150, "Temperature (TT-101)", "°C", "#10B981"), use_container_width=True)
-        st.plotly_chart(build_donut_gauge(status["inst_air"], 0, 10, "Instrument Air", "bar", "#3B82F6"), use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-# Panel 3: Instrument Health Table
-with r1_c3:
-    st.markdown('<div class="scada-card"><div class="card-title">🩺 Instrument Health</div>', unsafe_allow_html=True)
-    
-    cv_status = '<span class="status-warning">WARNING</span>' if status["valve_fault"] else '<span class="status-normal">NORMAL</span>'
-    
-    table_html = f"""
-    <table class="health-table">
-        <tr><th>Instrument</th><th>PV</th><th>Signal</th><th>Health</th><th>Status</th></tr>
-        <tr><td>PT-101</td><td>{status['pressure']} bar</td><td>12.2 mA</td><td>96%</td><td><span class="status-normal">NORMAL</span></td></tr>
-        <tr><td>LT-101</td><td>{status['level_pct']} %</td><td>12.0 mA</td><td>94%</td><td><span class="status-normal">NORMAL</span></td></tr>
-        <tr><td>TT-101</td><td>{status['temp']} °C</td><td>13.1 mA</td><td>93%</td><td><span class="status-normal">NORMAL</span></td></tr>
-        <tr><td>FT-101</td><td>{status['inflow']} m³/h</td><td>13.7 mA</td><td>92%</td><td><span class="status-normal">NORMAL</span></td></tr>
-        <tr><td>CV-101</td><td>{status['valve_fb']} % FB</td><td>35 % FB</td><td>58%</td><td>{cv_status}</td></tr>
-    </table>
-    """
-    st.markdown(table_html, unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+    # Telemetry Table Panel
+    st.markdown("""
+    <div class="scada-panel">
+        <div class="panel-header">📊 Deterministic Instrument Telemetry & Calculation Table</div>
+        <table class="telem-table">
+            <thead>
+                <tr>
+                    <th>Tag</th>
+                    <th>Description</th>
+                    <th>LRV - URV</th>
+                    <th>Calculated PV</th>
+                    <th>Analog Signal</th>
+                    <th>Health %</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td style="color:#38BDF8; font-weight:bold;">PT-101</td>
+                    <td>Tank Pressure Tx</td>
+                    <td>0 - 16 bar</td>
+                    <td><b>{} bar</b></td>
+                    <td style="color:#38BDF8;">12.21 mA</td>
+                    <td style="color:#34D399;">98%</td>
+                    <td><span class="tag-ok">NORMAL</span></td>
+                </tr>
+                <tr>
+                    <td style="color:#38BDF8; font-weight:bold;">PT-102</td>
+                    <td>Redundant Press Tx</td>
+                    <td>0 - 16 bar</td>
+                    <td><b>{} bar</b></td>
+                    <td style="color:#38BDF8;">12.21 mA</td>
+                    <td style="color:#34D399;">98%</td>
+                    <td><span class="tag-ok">NORMAL</span></td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    """.format(status['pressure'], status['pressure']), unsafe_allow_html=True)
 
-# --- SECOND ROW: TRENDS & AI WORKFLOW ---
-r2_c1, r2_c2 = st.columns([1.8, 1.2])
-
-with r2_c1:
-    st.markdown('<div class="scada-card"><div class="card-title">📈 Process Trends (Real-Time)</div>', unsafe_allow_html=True)
-    
-    fig_trend = go.Figure()
-    fig_trend.add_trace(go.Scatter(x=st.session_state.history["time"], y=st.session_state.history["level"], name="Level (%)", line=dict(color=gauge_col, width=2)))
-    fig_trend.add_trace(go.Scatter(x=st.session_state.history["time"], y=st.session_state.history["valve_cmd"], name="Valve Cmd (%)", line=dict(color="#3B82F6", width=2)))
-    fig_trend.add_trace(go.Scatter(x=st.session_state.history["time"], y=st.session_state.history["valve_fb"], name="Valve FB (%)", line=dict(color="#EF4444", width=2, dash='dash')))
-    
-    fig_trend.update_layout(
-        height=240, margin=dict(l=10, r=10, t=10, b=10),
-        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-        xaxis=dict(gridcolor='#1E293B'), yaxis=dict(gridcolor='#1E293B'),
-        legend=dict(orientation="h", y=1.1, x=0)
-    )
-    st.plotly_chart(fig_trend, use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-
-with r2_c2:
-    st.markdown('<div class="scada-card"><div class="card-title">🤖 AI Analysis – Multi-Agent Workflow</div>', unsafe_allow_html=True)
-    
-    st.success("1. **Diagnostic Engineer:** Detected deviation on CV-101 feedback vs command.")
-    st.info("2. **Process Engineer:** Process conditions appear stable.")
-    st.info("3. **Automation Engineer:** PLC/SCADA I/O healthy. Valve command signal verified.")
-    st.warning("4. **Root Cause Engineer:** High probability of positioner or actuator air line issue.")
-    
-    st.markdown('</div>', unsafe_allow_html=True)
-
-# --- BOTTOM ROW: AI ENGINEERING REPORT ---
-st.markdown('<div class="scada-card"><div class="card-title" style="color:#EF4444;">🚨 AI Engineering Report – HIGH PRIORITY</div>', unsafe_allow_html=True)
-if status["high_alarm"]:
-    st.error(f"🚨 **HIGH LEVEL ALARM ACTIVE ({status['level_pct']}%):** Tank level exceeded upper 95% threshold!")
-elif status["low_alarm"]:
-    st.warning(f"⚠️ **LOW LEVEL ALARM ACTIVE ({status['level_pct']}%):** Tank level dropped below lower 5% threshold!")
-elif status["valve_fault"]:
-    st.error("🚨 **INSTRUMENT DEVIATION:** CV-101 position feedback (35%) is lower than command (80%). Inspect positioner air pressure.")
-else:
-    st.success("✅ **ALL SYSTEMS NORMAL:** Process parameters within configured operating bounds.")
-st.markdown('</div>', unsafe_allow_html=True)
-
-# Auto-rerun loop for live SCADA dashboard updates
-time.sleep(1.0)
-st.rerun()
+# Auto-rerun loop for live simulation updating
+if not st.session_state.paused:
+    time.sleep(1.0)
+    st.rerun()
