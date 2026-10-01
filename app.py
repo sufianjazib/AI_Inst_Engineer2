@@ -110,28 +110,18 @@ if 'press_history' not in st.session_state:
     st.session_state.valve_fb_history = [35.0] * st.session_state.num_points
 
 def update_plant_simulation():
-    def update_plant_simulation():
-    if st.session_state.sim_running:
-        st.session_state.tick_count += 1
-        t = st.session_state.tick_count
-        noise = np.sin(t * 0.3) * 0.1
-        
-        # Check if manual level override is active
-        if st.session_state.enable_manual_level:
-            level = st.session_state.manual_level
-        else:
-            level = max(0.0, min(100.0, 50.0 + noise * 2.0))
-        
-        pressure = max(0.0, 8.2 + noise * 0.2)
-        # ... rest of your function remains the same ...
     """Simulates real-time plant physics and injects configured instrument faults."""
     if st.session_state.sim_running:
         st.session_state.tick_count += 1
         t = st.session_state.tick_count
         noise = np.sin(t * 0.3) * 0.1
         
-        # Base physical parameters
-        level = max(0.0, min(100.0, 50.0 + noise * 2.0))
+        # Check if manual level override is enabled
+        if st.session_state.get('enable_manual_level', False):
+            level = st.session_state.get('manual_level', 50.0)
+        else:
+            level = max(0.0, min(100.0, 50.0 + noise * 2.0))
+        
         pressure = max(0.0, 8.2 + noise * 0.2)
         temp = 85.0 + noise * 0.5
         flow = 182.0 + noise * 3.0
