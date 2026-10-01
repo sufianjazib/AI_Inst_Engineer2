@@ -64,6 +64,7 @@ st.markdown("""
     .tag-ok { background-color: #064E3B; color: #34D399; font-size: 10px; padding: 2px 6px; border-radius: 4px; border: 1px solid #059669; }
     .tag-fault { background-color: #7F1D1D; color: #FCA5A5; font-size: 10px; padding: 2px 6px; border-radius: 4px; border: 1px solid #DC2626; }
     .tag-active { background-color: #064E3B; color: #34D399; font-size: 11px; padding: 4px 10px; border-radius: 12px; font-weight: 600; }
+    .tag-esd { background-color: #7F1D1D; color: #EF4444; font-size: 11px; padding: 4px 10px; border-radius: 12px; font-weight: 700; border: 1px solid #EF4444; }
 
     /* Target Process Info Row */
     .info-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 12px; background: #070B14; padding: 8px; border-radius: 4px; }
@@ -84,6 +85,8 @@ if "history" not in st.session_state:
     st.session_state.history = {"time": list(range(30)), "pt101": [8.21]*30, "pt102": [8.21]*30, "cmd": [58.0]*30, "fb": [58.0]*30}
 if "paused" not in st.session_state:
     st.session_state.paused = False
+if "esd_tripped" not in st.session_state:
+    st.session_state.esd_tripped = False
 
 tank = st.session_state.tank
 
@@ -113,11 +116,14 @@ with head_col2:
     with btn_c2:
         if st.button("🔄 Reset", use_container_width=True):
             st.session_state.tank = TankSimulation()
+            st.session_state.esd_tripped = False
+            st.session_state.paused = False
             st.rerun()
 
 st.divider()
 
-if not st.session_state.paused:
+# Run simulation step only if not paused and ESD is not active
+if not st.session_state.paused and not st.session_state.esd_tripped:
     tank.update_simulation(dt=1.0)
 
 status = tank.get_status()
@@ -134,7 +140,7 @@ for k in st.session_state.history:
 # --- MAIN LAYOUT ---
 col_left, col_right = st.columns([1, 3])
 
-# --- LEFT COLUMN: TARGET PROCESS & FAULT INJECTION ---
+# --- LEFT COLUMN: TARGET PROCESS, ESD & FAULT INJECTION ---
 with col_left:
     # Target Process Panel
     st.markdown("""
@@ -149,6 +155,34 @@ with col_left:
     </div>
     """, unsafe_allow_html=True)
     
+    # Process Control & Emergency Shutdown Panel
+    st.markdown("""
+    <div class="scada-panel">
+        <div class="panel-header">
+            <span>🚨 System Commands</span>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    cmd_col1, cmd_col2 = st.columns(2)
+    with cmd_col1:
+        if st.button("▶ START SIM", type="primary", use_container_width=True):
+            st.session_state.esd_tripped = False
+            st.session_state.paused = False
+            st.rerun()
+            
+    with cmd_col2:
+        if st.button("🛑 ESD SHUTDOWN", type="primary", use_container_width=True):
+            st.session_state.esd_tripped = True
+            tank.set_valves(0.0, 0.0)  # Close process valves
+            st.rerun()
+            
+    if st.session_state.esd_tripped:
+        st.markdown('<div style="margin-top:10px; text-align:center;" class="tag-esd">🚨 EMERGENCY SHUTDOWN ACTIVE</div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div style="margin-top:10px; text-align:center;" class="tag-active">🟢 PROCESS RUNNING</div>', unsafe_allow_html=True)
+        
+    st.markdown('</div>', unsafe_allow_html=True)
+
     # Fault Injection Panel
     st.markdown("""
     <div class="scada-panel">
@@ -324,6 +358,6 @@ with col_right:
     """.format(status['pressure'], status['pressure']), unsafe_allow_html=True)
 
 # Auto-rerun loop for live simulation updating
-if not st.session_state.paused:
+if not st.session_state.paused and not st.session_state.esd_tripped:
     time.sleep(1.0)
     st.rerun()
