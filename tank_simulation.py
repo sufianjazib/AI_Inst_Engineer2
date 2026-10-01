@@ -38,7 +38,7 @@ class TankSimulation:
         net_change = inflow - outflow
         self.level_pct = np.clip(self.level_pct + net_change, 0.0, 100.0)
 
-    def check_alarms((self) -> dict:
+    def check_alarms(self) -> dict:
         """Returns active boolean alarm states based on thresholds."""
         return {
             "high_alarm": self.level_pct >= self.HIGH_ALARM_PCT,
